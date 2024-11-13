@@ -1,0 +1,1 @@
+pyinstaller -F -w --add-data ".\LOGO.ico;img" -i ".\LOGO.ico" ".\IMG_To_JPG_GUI.py" -n "IMG 轉 JPG GUI"
