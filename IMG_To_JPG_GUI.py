@@ -56,6 +56,8 @@ class Ui_Form(object):
         self.pushButton.setStyleSheet(button_style)
         self.pushButton.setText("📁")
         self.pushButton.setObjectName("pushButton")
+        self.pushButton.setToolTip("選擇檔案")
+        self.pushButton.setStyleSheet(button_style + "QToolTip { color: black; }")
 
         self.pushButton_2 = QtWidgets.QPushButton(parent=Form)
         self.pushButton_2.setGeometry(QtCore.QRect(100, 265, 70, 41))
@@ -63,6 +65,8 @@ class Ui_Form(object):
         self.pushButton_2.setStyleSheet(button_style)
         self.pushButton_2.setText("❌")
         self.pushButton_2.setObjectName("pushButton_2")
+        self.pushButton_2.setToolTip("刪除選擇")
+        self.pushButton_2.setStyleSheet(button_style + "QToolTip { color: black; }")
 
         self.pushButton_3 = QtWidgets.QPushButton(parent=Form)
         self.pushButton_3.setGeometry(QtCore.QRect(190, 265, 320, 41))
@@ -70,6 +74,8 @@ class Ui_Form(object):
         self.pushButton_3.setStyleSheet(button_style)
         self.pushButton_3.setText("執  行")
         self.pushButton_3.setObjectName("pushButton_3")
+        self.pushButton_3.setToolTip("開始轉換")
+        self.pushButton_3.setStyleSheet(button_style + "QToolTip { color: black; }")
 
         self.retranslateUi(Form)
         QtCore.QMetaObject.connectSlotsByName(Form)
@@ -108,8 +114,22 @@ class FileProcessor(QtCore.QObject):
             # 如果是圖片格式，進行圖片格式轉換
             if file_extension in supported_formats:
                 img = Image.open(file_path).convert("RGB")  # 轉為 RGB，保證輸出 JPG
-                output_path = os.path.splitext(file_path)[0] + "_convert.jpg"
-                img.save(output_path, "JPEG")  # 儲存為 JPG 格式
+                
+                # 取得原始檔案名稱和路徑
+                file_dir = os.path.dirname(file_path)
+                file_name = os.path.splitext(os.path.basename(file_path))[0]
+                
+                # 建立轉換後的檔案路徑
+                output_path = os.path.join(file_dir, f"{file_name}_convert.jpg")
+                
+                # 如果檔案已存在，加上數字編號
+                counter = 1
+                while os.path.exists(output_path):
+                    output_path = os.path.join(file_dir, f"{file_name}_convert_{counter}.jpg")
+                    counter += 1
+                
+                # 儲存為 JPG 格式，並保持原始圖片品質
+                img.save(output_path, "JPEG", quality=95, optimize=True)
 
             else:
                 # 這裡記錄不支援的檔案格式
@@ -136,14 +156,14 @@ class FileProcessor(QtCore.QObject):
 
         # 檢查是否有選擇檔案
         if file_paths:
-
+            total_files = len(file_paths)
             for i, file_path in enumerate(file_paths):
                 if self.process_file(file_path, log_file):
                     success_count += 1
                 else:
                     fail_count += 1
 
-                progress = int((i + 1) / len(file_paths) * 100)
+                progress = int((i + 1) / total_files * 100)
                 self.progressUpdated.emit(progress)
 
         self.processingFinished.emit(success_count, fail_count, log_file)
@@ -159,6 +179,7 @@ class MainWindow(QtWidgets.QWidget, Ui_Form):
         self.pushButton_3.clicked.connect(self.process_files)
         self.listWidget.setAcceptDrops(True)
         self.listWidget.setDragDropMode(QtWidgets.QAbstractItemView.DragDropMode.DropOnly)
+        self.listWidget.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
 
         self.listWidget.installEventFilter(self)  # 啟用事件過濾器
 
@@ -184,6 +205,9 @@ class MainWindow(QtWidgets.QWidget, Ui_Form):
     def keyPressEvent(self, event: QtGui.QKeyEvent):
         if event.key() == QtCore.Qt.Key.Key_Delete:
             self.remove_selected_files()
+        # Ctrl+A 全選
+        elif event.key() == QtCore.Qt.Key.Key_A and event.modifiers() == QtCore.Qt.KeyboardModifier.ControlModifier:
+            self.listWidget.selectAll()
         super().keyPressEvent(event)
 
     # 覆蓋事件過濾器函數
@@ -215,7 +239,12 @@ class MainWindow(QtWidgets.QWidget, Ui_Form):
 
     # 開啟資料夾的按鈕
     def open_files(self):
-        file_paths, _ = QtWidgets.QFileDialog.getOpenFileNames(self, "選擇文件", "", "所有文件 (*)")
+        file_paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
+            self, 
+            "選擇文件", 
+            "", 
+            "圖片檔案 (*.jpg *.jpeg *.jfif *.png *.gif *.bmp *.tiff *.ico *.webp *.heif *.heic);;所有文件 (*)"
+        )
         for file_path in file_paths:
             if not self.is_duplicate(file_path):
                 self.listWidget.addItem(file_path)
@@ -230,12 +259,24 @@ class MainWindow(QtWidgets.QWidget, Ui_Form):
     # 刪除選定的檔案
     def remove_selected_files(self):
         selected_items = self.listWidget.selectedItems()
+        if not selected_items:
+            return
+        
         for item in selected_items:
             self.listWidget.takeItem(self.listWidget.row(item))
 
     # 清空全部檔案
     def clear_all_files(self):
-        self.listWidget.clear()
+        if self.listWidget.count() > 0:
+            reply = QMessageBox.question(
+                self,
+                "確認清空",
+                "確定要清空所有檔案嗎？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self.listWidget.clear()
 
     # 開啟右鍵選單
     def contextMenuEvent(self, event: QContextMenuEvent):
@@ -250,9 +291,10 @@ class MainWindow(QtWidgets.QWidget, Ui_Form):
         self.progressBar.setValue(100)
         if fail_count > 0:
             message = f"完成: {success_count} 個，失敗: {fail_count} 個\n失敗的檔案已記錄在 {log_file}"
+            QMessageBox.warning(self, "處理結果", message)
         else:
             message = f"完成: {success_count} 個，失敗: {fail_count} 個"
-        QMessageBox.information(self, "處理結果", message)
+            QMessageBox.information(self, "處理結果", message)
 
     # 檢查列表中是否有文件可供處理。如果有，將文件列表提交到線程池進行處理，並重置進度條。
     def process_files(self):
@@ -262,9 +304,20 @@ class MainWindow(QtWidgets.QWidget, Ui_Form):
 
         file_paths = [self.listWidget.item(i).text() for i in range(self.listWidget.count())]
         self.progressBar.setValue(0)
+        
+        # 禁用按鈕，避免重複執行
+        self.pushButton.setEnabled(False)
+        self.pushButton_2.setEnabled(False)
+        self.pushButton_3.setEnabled(False)
 
-        # 單線程處裡
-        self.thread_pool.submit(self.file_processor.process_files, file_paths)
+        try:
+            # 單線程處裡
+            self.thread_pool.submit(self.file_processor.process_files, file_paths)
+        finally:
+            # 重新啟用按鈕
+            self.pushButton.setEnabled(True)
+            self.pushButton_2.setEnabled(True)
+            self.pushButton_3.setEnabled(True)
 
     # 右鍵開啟指定資料夾
     def open_folder(self):
